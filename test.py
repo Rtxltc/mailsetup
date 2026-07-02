@@ -18,7 +18,9 @@ class EmailRequest(BaseModel):
     subject: str
     text: str
 
-
+@app.get("/")
+def home():
+    return {"status": "running"}
 @app.post("/send-email")
 async def send_email(data: EmailRequest):
     response = requests.post(
