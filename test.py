@@ -10,13 +10,17 @@ RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 
 app = FastAPI()
 
+from pydantic import BaseModel
+
+class EmailRequest(BaseModel):
+    from_email: str
+    to: str
+    subject: str
+    text: str
+
+
 @app.post("/send-email")
-async def send_email(
-    from_email: str,
-    to: str,
-    subject: str,
-    text: str,
-):
+async def send_email(data: EmailRequest):
     response = requests.post(
         "https://api.resend.com/emails",
         headers={
@@ -24,10 +28,10 @@ async def send_email(
             "Content-Type": "application/json",
         },
         json={
-            "from": from_email,
-            "to": [to],
-            "subject": subject,
-            "text": text,
+            "from": data.from_email,
+            "to": [data.to],
+            "subject": data.subject,
+            "text": data.text,
         },
     )
 
