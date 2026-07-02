@@ -1,6 +1,6 @@
 import os
 import requests
-
+import uvicorn
 from fastapi import FastAPI, HTTPException
 from dotenv import load_dotenv
 
