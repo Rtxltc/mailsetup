@@ -16,6 +16,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://frontend-mailsetup.vercel.app",
+        
         "http://localhost:5173",
     ],
     allow_credentials=True,
@@ -37,30 +38,24 @@ def home():
     return {"status": "running"}
 @app.post("/send-email")
 async def send_email(data: EmailRequest):
+    payload = {
+        "from": data.from_email,
+        "to": [data.to],
+        "subject": data.subject,
+        "text": data.text,
+    }
+
+    if data.html:
+        payload["html"] = data.html
+
     response = requests.post(
         "https://api.resend.com/emails",
         headers={
             "Authorization": f"Bearer {RESEND_API_KEY}",
             "Content-Type": "application/json",
         },
-        payload = {
-    "from": data.from_email,
-    "to": [data.to],
-    "subject": data.subject,
-    "text": data.text,
-}
-
-if data.html:
-    payload["html"] = data.html
-
-response = requests.post(
-    "https://api.resend.com/emails",
-    headers={
-        "Authorization": f"Bearer {RESEND_API_KEY}",
-        "Content-Type": "application/json",
-    },
-    json=payload,
-)
+        json=payload,
+    )
 
     if response.status_code not in (200, 201):
         raise HTTPException(
