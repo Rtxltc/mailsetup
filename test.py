@@ -16,7 +16,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://frontend-mailsetup.vercel.app",
-        
+        "ms.soulmatrix.in",
         "http://localhost:5173",
     ],
     allow_credentials=True,
