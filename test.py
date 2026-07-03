@@ -30,6 +30,7 @@ class EmailRequest(BaseModel):
     to: str
     subject: str
     text: str
+    html: str | None = None
 
 @app.get("/")
 def home():
@@ -42,13 +43,24 @@ async def send_email(data: EmailRequest):
             "Authorization": f"Bearer {RESEND_API_KEY}",
             "Content-Type": "application/json",
         },
-        json={
-            "from": data.from_email,
-            "to": [data.to],
-            "subject": data.subject,
-            "text": data.text,
-        },
-    )
+        payload = {
+    "from": data.from_email,
+    "to": [data.to],
+    "subject": data.subject,
+    "text": data.text,
+}
+
+if data.html:
+    payload["html"] = data.html
+
+response = requests.post(
+    "https://api.resend.com/emails",
+    headers={
+        "Authorization": f"Bearer {RESEND_API_KEY}",
+        "Content-Type": "application/json",
+    },
+    json=payload,
+)
 
     if response.status_code not in (200, 201):
         raise HTTPException(
