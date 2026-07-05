@@ -64,3 +64,6 @@ async def send_email(data: EmailRequest):
         )
 
     return response.json()
+@app.post("mail/incoming")
+async def incoming():
+    return {"success": True}
