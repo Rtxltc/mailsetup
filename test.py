@@ -423,3 +423,14 @@ def mark_mail_read(email_id: int):
 def star_mail(email_id: int):
     email = get_email_by_id(email_id)
     return update_email_status(email_id, "starred", not email["starred"])
+@app.get("/db-test")
+def db_test():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM emails")
+    count = cur.fetchone()[0]
+    conn.close()
+    return {
+        "connected": True,
+        "emails": count
+    }
