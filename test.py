@@ -335,6 +335,20 @@ async def send_email(data: EmailRequest):
             detail=response.json(),
         )
 
+    save_incoming_data(
+        {
+            "from": data.from_email,
+            "to": data.to,
+            "subject": data.subject,
+            "text": data.text,
+            "html": data.html or "",
+            "preview": (data.text[:160] if data.text else ""),
+            "date": datetime.utcnow().isoformat(),
+            "source": "sent",
+        },
+        attachments=[],
+    )
+
     return response.json()
 
 @app.post("/mail/incoming")
