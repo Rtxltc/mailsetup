@@ -315,6 +315,7 @@ app.add_middleware(
     allow_origins=[
         "https://frontend-mailsetup.vercel.app",
         "https://ms.soulmatrix.in",
+        "https://ms.soulmatrix.in/inbox",
         "http://localhost:5173",
     ],
     allow_credentials=True,
