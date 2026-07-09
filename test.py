@@ -224,12 +224,28 @@ def _build_email_objects(rows):
     return result
 
 
-def get_saved_incoming_data(include_deleted: bool = False, search_query: str | None = None):
+def get_saved_incoming_data(
+    include_deleted: bool = False,
+    search_query: str | None = None,
+    folder: str | None = None,
+):
     where_clauses = []
     params = []
 
-    if not include_deleted:
+    if folder == "trash":
+        where_clauses.append("e.deleted = TRUE")
+    elif folder == "starred":
         where_clauses.append("e.deleted = FALSE")
+        where_clauses.append("e.starred = TRUE")
+    elif folder == "sent":
+        where_clauses.append("e.deleted = FALSE")
+        where_clauses.append("e.raw_json->>'source' = 'sent'")
+    elif folder == "inbox":
+        where_clauses.append("e.deleted = FALSE")
+        where_clauses.append("(e.raw_json->>'source' IS DISTINCT FROM 'sent')")
+    else:
+        if not include_deleted:
+            where_clauses.append("e.deleted = FALSE")
 
     if search_query and search_query.strip():
         search_term = f"%{search_query.strip()}%"
@@ -441,7 +457,22 @@ async def incoming(request: Request):
 
 @app.get("/mail/incoming")
 def get_incoming():
-    return get_saved_incoming_data()
+    return get_saved_incoming_data(folder="inbox")
+
+
+@app.get("/mail/sent")
+def get_sent():
+    return get_saved_incoming_data(folder="sent")
+
+
+@app.get("/mail/starred")
+def get_starred():
+    return get_saved_incoming_data(folder="starred")
+
+
+@app.get("/mail/deleted")
+def get_deleted():
+    return get_saved_incoming_data(folder="trash")
 
 
 @app.get("/mail/search")
@@ -454,6 +485,7 @@ def get_mail(email_id: int):
     return get_email_by_id(email_id)
 
 
+@app.post("/mail/{email_id}/delete")
 @app.delete("/mail/{email_id}")
 def delete_mail(email_id: int):
     conn = get_db_connection()
