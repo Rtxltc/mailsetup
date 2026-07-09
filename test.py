@@ -1,52 +1,71 @@
 import json
 import os
-import sqlite3
 from datetime import datetime
 import requests
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from dotenv import load_dotenv
 
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+except ImportError:
+    psycopg2 = None
+    RealDictCursor = None
+
 load_dotenv()
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
-DB_PATH = os.path.join(os.path.dirname(__file__), "mail_data.db")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
 
+def _is_postgres():
+    return bool(DATABASE_URL and psycopg2)
+
+
+def get_db_connection():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL is not configured")
+
+    conn = psycopg2.connect(DATABASE_URL)
+    conn.autocommit = False
+    return conn
+
+
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
+    conn = get_db_connection()
+    conn.cursor().execute(
         """
         CREATE TABLE IF NOT EXISTS emails (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             sender TEXT,
             recipient TEXT,
             subject TEXT,
             html TEXT,
             text TEXT,
             preview TEXT,
-            date TEXT,
-            read INTEGER DEFAULT 0,
-            starred INTEGER DEFAULT 0,
-            deleted INTEGER DEFAULT 0,
-            has_attachment INTEGER DEFAULT 0,
-            raw_json TEXT
+            date TIMESTAMP,
+            read BOOLEAN DEFAULT FALSE,
+            starred BOOLEAN DEFAULT FALSE,
+            deleted BOOLEAN DEFAULT FALSE,
+            has_attachment BOOLEAN DEFAULT FALSE,
+            raw_json JSONB
         )
         """
     )
-    conn.execute(
+    conn.cursor().execute(
         """
         CREATE TABLE IF NOT EXISTS attachments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             email_id INTEGER NOT NULL,
             filename TEXT,
             path TEXT,
             content_type TEXT,
-            size INTEGER,
+            size BIGINT,
             FOREIGN KEY (email_id) REFERENCES emails(id) ON DELETE CASCADE
         )
         """
@@ -93,7 +112,7 @@ def _extract_attachments(data: dict):
 
 
 def save_incoming_data(data: dict, attachments: list[dict] | None = None):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     sender = data.get("from") or data.get("sender") or data.get("from_email") or ""
     recipient = data.get("to") or data.get("recipient") or data.get("to_email") or ""
     subject = data.get("subject") or ""
@@ -103,12 +122,14 @@ def save_incoming_data(data: dict, attachments: list[dict] | None = None):
     date_value = data.get("date") or datetime.utcnow().isoformat()
     attachments = attachments or _extract_attachments(data)
 
-    cursor = conn.execute(
+    cursor = conn.cursor()
+    cursor.execute(
         """
         INSERT INTO emails (
             sender, recipient, subject, html, text, preview, date,
             read, starred, deleted, has_attachment, raw_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, 0, 0, 0, %s, %s)
+        RETURNING id
         """,
         (
             sender,
@@ -122,13 +143,13 @@ def save_incoming_data(data: dict, attachments: list[dict] | None = None):
             json.dumps(data, default=str),
         ),
     )
-    email_id = cursor.lastrowid
+    email_id = cursor.fetchone()[0]
 
     for attachment in attachments:
-        conn.execute(
+        cursor.execute(
             """
             INSERT INTO attachments (email_id, filename, path, content_type, size)
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s)
             """,
             (
                 email_id,
@@ -191,12 +212,11 @@ def get_saved_incoming_data(include_deleted: bool = False, search_query: str | N
     if search_query and search_query.strip():
         search_term = f"%{search_query.strip()}%"
         where_clauses.append(
-            "(e.sender LIKE ? OR e.recipient LIKE ? OR e.subject LIKE ? OR e.text LIKE ? OR e.preview LIKE ? OR e.raw_json LIKE ?)"
+            "(e.sender LIKE %s OR e.recipient LIKE %s OR e.subject LIKE %s OR e.text LIKE %s OR e.preview LIKE %s OR e.raw_json LIKE %s)"
         )
         params.extend([search_term] * 6)
 
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = get_db_connection()
     query = """
         SELECT
             e.id,
@@ -225,17 +245,19 @@ def get_saved_incoming_data(include_deleted: bool = False, search_query: str | N
         query += " WHERE " + " AND ".join(where_clauses)
 
     query += " ORDER BY e.id DESC, a.id ASC"
-    rows = conn.execute(query, params).fetchall()
+
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+
     conn.close()
 
     return _build_email_objects(rows)
 
 
 def get_email_by_id(email_id: int):
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute(
-        """
+    conn = get_db_connection()
+    query = """
         SELECT
             e.id,
             e.sender,
@@ -257,11 +279,14 @@ def get_email_by_id(email_id: int):
             a.size
         FROM emails e
         LEFT JOIN attachments a ON a.email_id = e.id
-        WHERE e.id = ?
+        WHERE e.id = %s
         ORDER BY a.id ASC
-        """,
-        (email_id,),
-    ).fetchall()
+        """
+
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor.execute(query, (email_id,))
+    rows = cursor.fetchall()
+
     conn.close()
 
     emails = _build_email_objects(rows)
@@ -271,8 +296,9 @@ def get_email_by_id(email_id: int):
 
 
 def update_email_status(email_id: int, field: str, value: bool):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.execute(f"UPDATE emails SET {field} = ? WHERE id = ?", (1 if value else 0, email_id))
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(f"UPDATE emails SET {field} = %s WHERE id = %s", (1 if value else 0, email_id))
     conn.commit()
     conn.close()
 
@@ -403,8 +429,9 @@ def get_mail(email_id: int):
 
 @app.delete("/mail/{email_id}")
 def delete_mail(email_id: int):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.execute("UPDATE emails SET deleted = 1 WHERE id = ?", (email_id,))
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE emails SET deleted = 1 WHERE id = %s", (email_id,))
     conn.commit()
     conn.close()
 
@@ -423,14 +450,3 @@ def mark_mail_read(email_id: int):
 def star_mail(email_id: int):
     email = get_email_by_id(email_id)
     return update_email_status(email_id, "starred", not email["starred"])
-@app.get("/db-test")
-def db_test():
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM emails")
-    count = cur.fetchone()[0]
-    conn.close()
-    return {
-        "connected": True,
-        "emails": count
-    }
