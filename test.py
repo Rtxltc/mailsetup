@@ -183,6 +183,15 @@ def _build_email_objects(rows):
 
     for row in rows:
         if current_email is None or current_email["id"] != row["id"]:
+            raw_json_val = row["raw_json"]
+            if isinstance(raw_json_val, str):
+                try:
+                    raw_json_val = json.loads(raw_json_val)
+                except Exception:
+                    raw_json_val = {}
+            elif not isinstance(raw_json_val, dict):
+                raw_json_val = {}
+
             current_email = {
                 "id": row["id"],
                 "sender": row["sender"],
@@ -196,7 +205,7 @@ def _build_email_objects(rows):
                 "starred": bool(row["starred"]),
                 "deleted": bool(row["deleted"]),
                 "has_attachment": bool(row["has_attachment"]),
-                "raw_json": json.loads(row["raw_json"]) if row["raw_json"] else {},
+                "raw_json": raw_json_val,
                 "attachments": [],
             }
             result.append(current_email)
